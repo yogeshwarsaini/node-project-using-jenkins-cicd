@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USERNAME = "yogismash/node-app"
-        DOCKER_IMAGE = "${DOCKERHUB_USERNAME}/my-app"
+        DOCKERHUB_USERNAME = "yogismash"
+        DOCKER_IMAGE = "${DOCKERHUB_USERNAME}/node-app"
         CONTAINER_NAME = "my-container"
 
         APP_PORT = "3000"
@@ -44,7 +44,7 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'USER',
+                    usernameVariable: 'USER'
                     passwordVariable: 'PASS'
                 )]) {
                     sh 'echo $PASS | docker login -u $USER --password-stdin'
