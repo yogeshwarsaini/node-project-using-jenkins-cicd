@@ -252,7 +252,7 @@
         stage('DockerHub Login') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
+                    credentialsId: 'dockerhub-token',
                     usernameVariable: 'USER',
                     passwordVariable: 'PASS'
                 )]) {
