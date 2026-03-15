@@ -103,30 +103,38 @@
 // }
 
 
-pipeline {
+
+ 
+     pipeline {
     agent any
     
-    environment {
-        DOCKERHUB_USERNAME = "yogeshwarsaini"
-        DOCKER_IMAGE = "yogeshwarsaini/node-project"
-        CONTAINER_NAME = "node-container"
-        APP_PORT = "3000"
-        HOST_PORT = "3000"
-        DOCKERFILE_PATH = "."
-        HEALTH_CHECK_PATH = "/"
-        WAIT_TIME = "10"
-        IMAGE_TAG = "${GIT_COMMIT}"
-        SONAR_PROJECT_KEY = "sonar-key"
-    }
+  environment {
+    DOCKERHUB_USERNAME = "yogeshwarsaini"
+    DOCKER_IMAGE = "yogeshwarsaini/node-project"
+    CONTAINER_NAME = "node-container"
+    APP_PORT = "3000"
+    HOST_PORT = "3000"
+    DOCKERFILE_PATH = "."
+    HEALTH_CHECK_PATH = "/"
+    WAIT_TIME = "10"
+    IMAGE_TAG = "${GIT_COMMIT}"
+    SONAR_PROJECT_KEY = "sonar-key"
+}
 
     stages {
 
+        // ─────────────────────────────
+        // Stage 1: Cleanup
+        // ─────────────────────────────
         stage('Cleanup') {
             steps {
                 cleanWs()
             }
         }
 
+        // ─────────────────────────────
+        // Stage 2: Checkout
+        // ─────────────────────────────
         stage('Checkout') {
             steps {
                 checkout scm
@@ -134,6 +142,9 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 3: SAST - SonarQube
+        // ─────────────────────────────
         stage('SAST - SonarQube Scan') {
             steps {
                 withSonarQubeEnv('SonarQube') {
@@ -148,11 +159,14 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 4: Quality Gate
+        // ─────────────────────────────
         stage('Quality Gate') {
             steps {
                 script {
                     try {
-                        timeout(time: 1, unit: 'MINUTES') {
+                        timeout(time: 15, unit: 'MINUTES') {
                             waitForQualityGate abortPipeline: false
                         }
                     } catch (err) {
@@ -162,6 +176,41 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 5: SCA - OWASP DC
+        // ─────────────────────────────
+        stage('SCA - OWASP Dependency Check') {
+            steps {
+                script {
+                    try {
+                        sh """
+                            mkdir -p ./reports/dependency-check
+                            /opt/dependency-check/bin/dependency-check.sh \
+                              --project "my-app" \
+                              --scan . \
+                              --format HTML \
+                              --format XML \
+                              --out ./reports/dependency-check \
+                              --failOnCVSS 7 \
+                              --noupdate \
+                              --data /opt/dependency-check/data
+                        """
+                    } catch (err) {
+                        echo "⚠️ OWASP DC issue - continuing!"
+                    }
+                }
+            }
+            post {
+                always {
+                    dependencyCheckPublisher \
+                        pattern: 'reports/dependency-check/dependency-check-report.xml'
+                }
+            }
+        }
+
+        // ─────────────────────────────
+        // Stage 6: Docker Build
+        // ─────────────────────────────
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -174,40 +223,47 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 7: Trivy Image Scan
+        // ─────────────────────────────
         stage('Trivy Image Scan') {
             steps {
-                sh """
-                    mkdir -p reports/trivy
-                    trivy image \
-                      --format table \
-                      --output reports/trivy/trivy-report.txt \
-                      --severity HIGH,CRITICAL \
-                      ${DOCKER_IMAGE}:${IMAGE_TAG}
-                    cat reports/trivy/trivy-report.txt
-                """
+                script {
+                    sh """
+                        mkdir -p reports/trivy
+
+                        # Scan karo
+                        trivy image \
+                          --format table \
+                          --output reports/trivy/trivy-report.txt \
+                          --severity HIGH,CRITICAL \
+                          ${DOCKER_IMAGE}:${IMAGE_TAG}
+
+                        # Report print karo
+                        cat reports/trivy/trivy-report.txt
+                    """
+                }
             }
         }
 
+        // ─────────────────────────────
+        // Stage 8: DockerHub Login
+        // ─────────────────────────────
         stage('DockerHub Login') {
-    steps {
-        script {
-            withCredentials([usernamePassword(
-                credentialsId: 'dockerhub-creds',
-                usernameVariable: 'DOCKER_USER',
-                passwordVariable: 'DOCKER_PASS'
-            )]) {
-                sh """
-                    echo "${DOCKER_PASS}" | \
-                    docker login \
-                      -u "${DOCKER_USER}" \
-                      --password-stdin
-                    echo "✅ Login successful!"
-                """
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                }
             }
         }
-    }
-}
 
+        // ─────────────────────────────
+        // Stage 9: Push Image
+        // ─────────────────────────────
         stage('Push Image') {
             steps {
                 sh """
@@ -218,6 +274,9 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 10: Stop Old Container
+        // ─────────────────────────────
         stage('Stop Old Container') {
             steps {
                 sh """
@@ -227,6 +286,9 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 11: Deploy
+        // ─────────────────────────────
         stage('Deploy') {
             steps {
                 sh """
@@ -242,6 +304,9 @@ pipeline {
             }
         }
 
+        // ─────────────────────────────
+        // Stage 12: Verify
+        // ─────────────────────────────
         stage('Verify') {
             steps {
                 sh "sleep ${WAIT_TIME}"
@@ -259,11 +324,15 @@ pipeline {
             echo '❌ Pipeline Failed!'
         }
         always {
+            // Reports archive karo
             archiveArtifacts \
                 artifacts: 'reports/**/*',
                 allowEmptyArchive: true
+
+            // Cleanup
             sh 'docker image prune -f || true'
             cleanWs()
         }
     }
 }
+
